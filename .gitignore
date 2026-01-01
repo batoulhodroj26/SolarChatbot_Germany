@@ -1,3 +1,10 @@
 .env
 venv/
 __pycache__/
+
+# Streamlit & Secrets (CRITICAL)
+.streamlit/
+secrets.toml
+
+# Local database/logs
+leads.txt

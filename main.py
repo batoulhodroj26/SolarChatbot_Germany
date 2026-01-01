@@ -1,74 +1,97 @@
 import streamlit as st
-from datetime import datetime
-from engine.engine import get_chat_response
-from engine.scoring import LeadScoreCard
+from google import genai
+from fpdf import FPDF
+import datetime
 
-st.set_page_config(page_title="Solar Lead Pro", layout="wide")
+# --- 1. CONFIGURATION ---
+st.set_page_config(page_title="Solar Expert Germany 2026", page_icon="☀️")
 
-# --- SESSION STATE (The Bot's Memory) ---
-if "tracker" not in st.session_state:
-    st.session_state.tracker = LeadScoreCard()
-if "messages" not in st.session_state:
-    st.session_state.messages = []
-if "lead_saved" not in st.session_state:
-    st.session_state.lead_saved = False
+# Initialize Session State
+for key in ["chat_history", "balloons_shown", "tech_score", "fin_score", "intent_score"]:
+    if key not in st.session_state:
+        st.session_state[key] = [] if "history" in key else 0 if "score" in key else False
+
+# NEW 2026 API Client Setup
+try:
+    API_KEY = st.secrets["GEMINI_API_KEY"]
+    client = genai.Client(api_key=API_KEY)
+except Exception:
+    st.error("Missing GEMINI_API_KEY in Secrets!")
+
+# --- 2. SIDEBAR ---
+st.sidebar.header("Lead Qualifizierung")
+st.sidebar.progress(st.session_state.tech_score * 10, text=f"Technik: {st.session_state.tech_score}/10")
+st.sidebar.progress(st.session_state.fin_score * 10, text=f"Budget: {st.session_state.fin_score}/10")
+st.sidebar.progress(st.session_state.intent_score * 10, text=f"Interesse: {st.session_state.intent_score}/10")
+
+# --- 3. MAIN UI ---
+st.title("☀️ Ihr Solar-Experte")
+st.info("Willkommen! Ich helfe Ihnen bei der Planung Ihrer PV-Anlage.")
+
+for message in st.session_state.chat_history:
+    with st.chat_message(message["role"]):
+        st.markdown(message["content"])
+
+# --- 4. CHAT INPUT & NEW 2026 AI LOGIC ---
+if prompt := st.chat_input("Schreiben Sie hier..."):
+    st.session_state.chat_history.append({"role": "user", "content": prompt})
+    with st.chat_message("user"):
+        st.markdown(prompt)
+
+    # Scoring Logic
+    p_lower = prompt.lower()
+    if any(k in p_lower for k in ["hauseigentümer", "besitzer", "eigentum", "haus"]):
+        st.session_state.tech_score = 10
+    if any(k in p_lower for k in ["euro", "€", "budget", "sparen", "kosten"]):
+        st.session_state.fin_score = 10
+    if any(k in p_lower for k in ["tesla", "laden", "wallbox", "batterie"]):
+        st.session_state.intent_score = 10
+
+    # AI Response using Gemini 3 Flash (Fastest & Most Reliable in 2026)
+    with st.chat_message("assistant"):
+        try:
+            # We target 'gemini-3-flash' as it is the current workhorse
+            response = client.models.generate_content(
+                model="gemini-3-flash",
+                contents=f"Du bist ein Solar-Experte in Deutschland. Antworte hilfreich auf Deutsch: {prompt}"
+            )
+            full_response = response.text
+        except Exception as e:
+            # Fallback to 2.5 if 3 is not yet in your region
+            try:
+                response = client.models.generate_content(model="gemini-2.5-flash", contents=prompt)
+                full_response = response.text
+            except:
+                full_response = f"⚠️ Verbindungsfehler: {str(e)}"
+
+        st.markdown(full_response)
+        st.session_state.chat_history.append({"role": "assistant", "content": full_response})
+
+    st.rerun()
+
+# --- 5. QUALIFICATION & PDF ---
+if st.session_state.tech_score >= 10 and st.session_state.fin_score >= 10:
+    if not st.session_state.balloons_shown:
+        st.balloons()
+        st.success("🎉 Glückwunsch! Sie sind als Premium-Kunde qualifiziert.")
+        st.session_state.balloons_shown = True
 
 
-def save_lead_to_file(scores):
-    """Saves the lead data locally for Omar to see"""
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    with open("leads.txt", "a", encoding="utf-8") as f:
-        f.write(f"\n--- NEW LEAD: {timestamp} ---\n")
-        f.write(f"Tech: {scores['Technical']}/10 | Finance: {scores['Financial']}/10 | Intent: {scores['Intent']}/10\n")
-        f.write("-" * 40 + "\n")
+    def create_pdf():
+        pdf = FPDF()
+        pdf.add_page()
+        pdf.set_font("Arial", 'B', 16)
+        pdf.cell(200, 10, "Solar-Qualifizierungsbericht", ln=True, align='C')
+        pdf.ln(10)
+        pdf.set_font("Arial", size=12)
+        pdf.cell(200, 10, f"Erstellt am: {datetime.date.today()}", ln=True)
+        pdf.multi_cell(0, 10, "Basierend auf unserem Gespräch sind Sie ein idealer Kandidat für eine Solaranlage.")
+        return pdf.output(dest='S').encode('latin-1')
 
 
-# --- SIDEBAR (The Progress Bars) ---
-st.sidebar.title("Lead Qualifizierung")
-for cat, score in st.session_state.tracker.scores.items():
-    st.sidebar.write(f"**{cat}**")
-    st.sidebar.progress(score * 10)
-    st.sidebar.caption(f"Status: {score}/10")
-
-# --- CHAT INTERFACE ---
-st.title("☀️ Solar KI-Assistent")
-
-# NEW: Welcome Logic - If no messages, the bot starts
-if not st.session_state.messages:
-    welcome = "Hallo! Ich bin Ihr Solar-Experte. Gehört Ihnen die Immobilie, für die Sie Solar planen?"
-    st.session_state.messages.append({"role": "assistant", "content": welcome})
-
-# Display all messages
-for msg in st.session_state.messages:
-    with st.chat_message(msg["role"]):
-        st.markdown(msg["content"])
-
-# Check if user reached 30/30 score
-total_score = sum(st.session_state.tracker.scores.values())
-
-if total_score >= 30:
-    st.balloons()
-    st.success("🎉 Glückwunsch! Sie sind voll qualifiziert. Wir haben Ihre Daten gespeichert.")
-    if not st.session_state.lead_saved:
-        save_lead_to_file(st.session_state.tracker.scores)
-        st.session_state.lead_saved = True
-    st.button("PDF Angebot herunterladen")
-else:
-    # User Input Field
-    if prompt := st.chat_input("Ihre Antwort..."):
-        # 1. Update the scoring bars
-        st.session_state.tracker.evaluate_all(prompt)
-
-        # 2. Add user message to history
-        st.session_state.messages.append({"role": "user", "content": prompt})
-        with st.chat_message("user"):
-            st.markdown(prompt)
-
-        # 3. Get AI Response
-        with st.chat_message("assistant"):
-            answer = get_chat_response(prompt)
-            st.markdown(answer)
-            st.session_state.messages.append({"role": "assistant", "content": answer})
-
-        # Refresh to show new messages and updated bars
-        st.rerun()
+    st.download_button(
+        label="📥 PDF-Bericht herunterladen",
+        data=create_pdf(),
+        file_name="Solar_Expert_Report.pdf",
+        mime="application/pdf"
+    )
