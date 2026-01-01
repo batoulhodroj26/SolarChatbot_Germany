@@ -1,25 +1,36 @@
-# engine/scoring.py
+import streamlit as st
+import google.generativeai as genai
 
-class LeadScoreCard:
-    def __init__(self):
-        # Initialize scores for different categories
-        self.scores = {"Technical": 0, "Financial": 0, "Intent": 0}
 
-    def evaluate_technical(self, ownership, building_type):
-        """Scoring for Module 2: Technical Feasibility"""
-        if ownership == "owner":
-            self.scores["Technical"] += 5
-        if building_type == "einfamilienhaus":
-            self.scores["Technical"] += 5
+def get_chat_response(prompt):
+    try:
+        # 1. Setup
+        api_key = st.secrets["GEMINI_API_KEY"]
+        genai.configure(api_key=api_key)
 
-    def evaluate_financial(self, accepted_range):
-        """Scoring for Module 3: Financial Qualification"""
-        if accepted_range:
-            self.scores["Financial"] += 10
+        # 2. Model Scanner (This prevents the 404 error)
+        # It finds exactly which model name your library supports
+        working_model_name = "gemini-pro"  # Default
+        try:
+            for m in genai.list_models():
+                if 'generateContent' in m.supported_generation_methods:
+                    working_model_name = m.name
+                    break
+        except Exception as list_error:
+            print(f"ListModels Error: {list_error}")
 
-    def evaluate_intent(self, has_ev, has_heat_pump):
-        """Scoring for Module 4: Intent Detection"""
-        if has_ev:
-            self.scores["Intent"] += 5
-        if has_heat_pump:
-            self.scores["Intent"] += 5
+        # 3. Initialize the found model
+        model = genai.GenerativeModel(working_model_name)
+
+        # 4. Generate the response
+        # We add a personality so it sounds like a professional consultant
+        response = model.generate_content(
+            f"Du bist ein Solar-Experte. Antworte auf Deutsch: {prompt}"
+        )
+
+        return response.text
+
+    except Exception as e:
+        # This will only show if your internet is down or the API key is blocked
+        print(f"TERMINAL ERROR: {e}")
+        return "Die KI-Verbindung wird stabilisiert. Bitte nennen Sie mir Ihr Budget."

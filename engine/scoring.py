@@ -1,38 +1,19 @@
-# engine/scoring.py
-
 class LeadScoreCard:
     def __init__(self):
-        # We track three main categories required by your project
-        self.scores = {
-            "Technical": 0,  # Roof, house type, shading
-            "Financial": 0,  # Budget and price anchor
-            "Intent": 0  # Urgency and extra tech (EV/Heat Pump)
-        }
+        # We start all scores at 0
+        self.scores = {"Technical": 0, "Financial": 0, "Intent": 0}
 
-    def evaluate_technical(self, ownership, building_type):
-        """Module 2: Technical Feasibility Scoring"""
-        # Homeowners are the primary target in Germany
-        if ownership == "owner":
-            self.scores["Technical"] += 5
+    def evaluate_all(self, text):
+        text = text.lower()
 
-        # Single-family homes (Einfamilienhaus) are ideal
-        if building_type == "einfamilienhaus":
-            self.scores["Technical"] += 5
+        # Technical Score (Ownership and House Type)
+        if any(word in text for word in ["ja", "eigentümer", "besitzer", "haus", "gehört mir"]):
+            self.scores["Technical"] = 10
 
-    def evaluate_financial(self, accepts_price_anchor):
-        """Module 3: Financial Qualification Scoring"""
-        # If they agree to the €18k-€25k range, they get full points
-        if accepts_price_anchor:
-            self.scores["Financial"] += 10
+        # Financial Score (Budget and Price)
+        if any(word in text for word in ["euro", "budget", "bezahlen", "20.000", "günstig", "passt"]):
+            self.scores["Financial"] = 10
 
-    def evaluate_intent(self, wants_ev, wants_heat_pump):
-        """Module 4: Intent & Upsell Detection"""
-        # Planning for an EV or Heat Pump shows high urgency
-        if wants_ev:
-            self.scores["Intent"] += 5
-        if wants_heat_pump:
-            self.scores["Intent"] += 5
-
-    def get_total_score(self):
-        # Calculate the grand total (out of 30)
-        return sum(self.scores.values())
+        # Intent Score (Future Planning)
+        if any(word in text for word in ["auto", "wärmepumpe", "pumpe", "laden", "strom", "planen"]):
+            self.scores["Intent"] = 10
