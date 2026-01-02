@@ -2,6 +2,10 @@ import streamlit as st
 from google import genai
 from fpdf import FPDF
 import datetime
+import os
+from dotenv import load_dotenv
+
+load_dotenv() # This requires 'python-dotenv'
 
 # --- 1. CONFIGURATION ---
 st.set_page_config(page_title="Solar Expert Germany 2026", page_icon="☀️")
