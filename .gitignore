@@ -1,8 +1,4 @@
-.env
-venv/
+.streamlit/secrets.toml
 __pycache__/
-
-# Streamlit & Secrets (CRITICAL)
-.streamlit/
-secrets.toml
-
+*.pyc
+.env

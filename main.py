@@ -1,101 +1,162 @@
 import streamlit as st
+import json
+import time
 from google import genai
 from fpdf import FPDF
-import datetime
-import os
-from dotenv import load_dotenv
 
-load_dotenv() # This requires 'python-dotenv'
 
-# --- 1. CONFIGURATION ---
-st.set_page_config(page_title="Solar Expert Germany 2026", page_icon="☀️")
+# --- 1. SALES HANDOFF & PDF GENERATION (Scope 6) ---
+def create_pdf(data):
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("Arial", 'B', 18)
+    pdf.set_text_color(255, 140, 0)  # Corporate Solar Orange
+    pdf.cell(200, 15, "SOLAR-SALES HANDOVER PROTOCOL", ln=True, align='C')
+    pdf.ln(10)
 
-# Initialize Session State
-for key in ["chat_history", "balloons_shown", "tech_score", "fin_score", "intent_score"]:
-    if key not in st.session_state:
-        st.session_state[key] = [] if "history" in key else 0 if "score" in key else False
+    # Lead Status
+    pdf.set_font("Arial", 'B', 12)
+    pdf.set_text_color(0, 0, 0)
+    status = "QUALIFIED" if data['qualified'] else "REJECTED/PENDING"
+    pdf.cell(200, 10, f"Lead Handoff Status: {status}", ln=True)
+    pdf.ln(5)
 
-# NEW 2026 API Client Setup
-try:
-    API_KEY = st.secrets["GEMINI_API_KEY"]
-    client = genai.Client(api_key=API_KEY)
-except Exception:
-    st.error("Missing GEMINI_API_KEY in Secrets!")
+    # Scoring Metrics (Scope 2 & 3)
+    pdf.set_fill_color(240, 240, 240)
+    pdf.cell(80, 10, "Qualification Metric", 1, 0, 'L', True)
+    pdf.cell(40, 10, "Score (0-10)", 1, 1, 'C', True)
 
-# --- 2. SIDEBAR ---
-st.sidebar.header("Lead Qualifizierung")
-st.sidebar.progress(st.session_state.tech_score * 10, text=f"Technik: {st.session_state.tech_score}/10")
-st.sidebar.progress(st.session_state.fin_score * 10, text=f"Budget: {st.session_state.fin_score}/10")
-st.sidebar.progress(st.session_state.intent_score * 10, text=f"Interesse: {st.session_state.intent_score}/10")
+    pdf.set_font("Arial", size=11)
+    pdf.cell(80, 10, "Technical Feasibility", 1)
+    pdf.cell(40, 10, f"{data['technical_score']}/10", 1, 1, 'C')
+    pdf.cell(80, 10, "Financial Readiness", 1)
+    pdf.cell(40, 10, f"{data['financial_score']}/10", 1, 1, 'C')
+    pdf.cell(80, 10, "Purchase Intent", 1)
+    pdf.cell(40, 10, f"{data['intent_score']}/10", 1, 1, 'C')
 
-# --- 3. MAIN UI ---
-st.title("☀️ Ihr Solar-Experte")
-st.info("Willkommen! Ich helfe Ihnen bei der Planung Ihrer PV-Anlage.")
+    # Structured Summary (Scope 6)
+    pdf.ln(10)
+    pdf.set_font("Arial", 'B', 12)
+    pdf.cell(0, 10, "Executive Sales Summary:", ln=True)
+    pdf.set_font("Arial", size=11)
+    summary_text = data.get('summary', 'No summary provided.').encode('latin-1', 'replace').decode('latin-1')
+    pdf.multi_cell(0, 8, summary_text)
 
-for message in st.session_state.chat_history:
-    with st.chat_message(message["role"]):
-        st.markdown(message["content"])
+    # Recommended Next Step
+    pdf.ln(5)
+    next_step = "Next Step: Schedule Sales Consultation" if data[
+        'qualified'] else "Next Step: Automated Rejection / Lead Nurture"
+    pdf.set_font("Arial", 'I', 11)
+    pdf.cell(0, 10, next_step, ln=True)
 
-# --- 4. CHAT INPUT & NEW 2026 AI LOGIC ---
-if prompt := st.chat_input("Schreiben Sie hier..."):
-    st.session_state.chat_history.append({"role": "user", "content": prompt})
+    return pdf.output(dest='S').encode('latin-1')
+
+
+# --- 2. MULTI-KEY & MULTI-MODEL ARCHITECTURE (Constraints) ---
+st.set_page_config(page_title="SolarExpert Germany | Sales Filter", layout="wide")
+
+# Setup Dual Clients for high availability
+client_primary = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
+client_backup = genai.Client(api_key=st.secrets["BACKUP_API_KEY"])
+
+# Model hierarchy for failover
+MODEL_POOL = ["gemini-1.5-flash", "gemini-1.5-flash-8b", "gemini-2.0-flash-exp"]
+
+if "messages" not in st.session_state:
+    st.session_state.messages = [{"role": "assistant",
+                                  "content": "Willkommen bei SolarExpert Deutschland. Sind Sie der Eigentümer der Immobilie?"}]
+if "scores" not in st.session_state:
+    st.session_state.scores = {"technical_score": 0, "financial_score": 0, "intent_score": 0, "summary": "",
+                               "qualified": False, "risk_flag": False}
+
+# --- 3. SIDEBAR: THE SALES COCKPIT (Deliverable 1) ---
+with st.sidebar:
+    st.title("📊 Lead Dashboard")
+    s = st.session_state.scores
+
+    st.write(f"**Technik:** {s['technical_score']}/10")
+    st.progress(s['technical_score'] / 10)
+    st.write(f"**Finanzen:** {s['financial_score']}/10")
+    st.progress(s['financial_score'] / 10)
+    st.write(f"**Absicht:** {s['intent_score']}/10")
+    st.progress(s['intent_score'] / 10)
+
+    st.divider()
+
+    # Risk Detection Alerts (Scope 5)
+    if s.get("risk_flag"):
+        st.error("❌ LEAD DISQUALIFIED: Risk detected (e.g. Renter or Unsuitable Building)")
+    elif s.get("qualified"):
+        st.success("✅ LEAD QUALIFIED: Escalating to Sales")
+        pdf_bytes = create_pdf(s)
+        st.download_button("📄 Download Sales Report (PDF)", data=pdf_bytes, file_name="Solar_Lead_Handoff.pdf")
+    else:
+        st.info("🕒 Qualification in Progress...")
+
+# --- 4. CORE CHATBOT ENGINE (Scope 1 & 4) ---
+st.title("Intelligent Solar Filter ☀️")
+st.caption("Residential Rooftop Solar Qualification Bot - German Market Only")
+
+for msg in st.session_state.messages:
+    with st.chat_message(msg["role"]): st.markdown(msg["content"])
+
+if prompt := st.chat_input("Ihre Antwort..."):
+    st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)
 
-    # Scoring Logic
-    p_lower = prompt.lower()
-    if any(k in p_lower for k in ["hauseigentümer", "besitzer", "eigentum", "haus"]):
-        st.session_state.tech_score = 10
-    if any(k in p_lower for k in ["euro", "€", "budget", "sparen", "kosten"]):
-        st.session_state.fin_score = 10
-    if any(k in p_lower for k in ["tesla", "laden", "wallbox", "batterie"]):
-        st.session_state.intent_score = 10
-
-    # AI Response using Gemini 3 Flash (Fastest & Most Reliable in 2026)
     with st.chat_message("assistant"):
-        try:
-            # We target 'gemini-3-flash' as it is the current workhorse
-            response = client.models.generate_content(
-                model="gemini-3-flash",
-                contents=f"Du bist ein Solar-Experte in Deutschland. Antworte hilfreich auf Deutsch: {prompt}"
-            )
-            full_response = response.text
-        except Exception as e:
-            # Fallback to 2.5 if 3 is not yet in your region
+        history_str = "\n".join([f"{m['role']}: {m['content']}" for m in st.session_state.messages])
+
+        # This Master Instruction ensures we follow Scope 2, 3, 5, and 7
+        master_instruction = f"""
+        Identity: Solar Sales Bot for Germany.
+        Language: Speak German (Tone: Trustworthy, professional).
+        Rules: 
+        1. DO NOT promise exact savings or subsidies (Compliance).
+        2. Detect if user is a 'Mieter' (renter). If so, set risk_flag: true.
+        3. Assess technical (roof, orientation) and financial (budget, Tesla/EV).
+        4. Distinguish price-shoppers from genuine buyers.
+
+        OUTPUT FORMAT:
+        Reply: [German Response]
+        JSON: {{"technical_score": int, "financial_score": int, "intent_score": int, "qualified": bool, "risk_flag": bool, "summary": "Detailed English summary for sales"}}
+
+        CONTEXT:
+        {history_str}
+        """
+
+        # HIERARCHICAL FAILOVER LOGIC
+        final_response = None
+
+        # Strategy: Loop through Primary Account first, then Backup Account
+        clients = [client_primary, client_backup]
+        for client in clients:
+            if final_response: break
+            for model in MODEL_POOL:
+                try:
+                    time.sleep(0.5)  # Prevent Rate-Limit Bursting
+                    res = client.models.generate_content(model=model, contents=master_instruction)
+                    if res.text:
+                        final_response = res.text
+                        break
+                except Exception:
+                    continue
+
+        if final_response:
             try:
-                response = client.models.generate_content(model="gemini-2.5-flash", contents=prompt)
-                full_response = response.text
-            except:
-                full_response = f"⚠️ Verbindungsfehler: {str(e)}"
+                if "JSON:" in final_response:
+                    parts = final_response.split("JSON:")
+                    chat_text = parts[0].replace("Reply:", "").strip()
+                    json_data = json.loads(parts[1].strip())
 
-        st.markdown(full_response)
-        st.session_state.chat_history.append({"role": "assistant", "content": full_response})
-
-    st.rerun()
-
-# --- 5. QUALIFICATION & PDF ---
-if st.session_state.tech_score >= 10 and st.session_state.fin_score >= 10:
-    if not st.session_state.balloons_shown:
-        st.balloons()
-        st.success("🎉 Glückwunsch! Sie sind als Premium-Kunde qualifiziert.")
-        st.session_state.balloons_shown = True
-
-
-    def create_pdf():
-        pdf = FPDF()
-        pdf.add_page()
-        pdf.set_font("Arial", 'B', 16)
-        pdf.cell(200, 10, "Solar-Qualifizierungsbericht", ln=True, align='C')
-        pdf.ln(10)
-        pdf.set_font("Arial", size=12)
-        pdf.cell(200, 10, f"Erstellt am: {datetime.date.today()}", ln=True)
-        pdf.multi_cell(0, 10, "Basierend auf unserem Gespräch sind Sie ein idealer Kandidat für eine Solaranlage.")
-        return pdf.output(dest='S').encode('latin-1')
-
-
-    st.download_button(
-        label="📥 PDF-Bericht herunterladen",
-        data=create_pdf(),
-        file_name="Solar_Expert_Report.pdf",
-        mime="application/pdf"
-    )
+                    st.session_state.scores.update(json_data)
+                    st.session_state.messages.append({"role": "assistant", "content": chat_text})
+                    st.markdown(chat_text)
+                    st.rerun()
+                else:
+                    st.markdown(final_response)
+            except Exception:
+                st.markdown(final_res)
+        else:
+            st.error("⚠️ All API instances exhausted. Please wait 60 seconds.")
